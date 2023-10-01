@@ -1,0 +1,237 @@
+// DCCControllerServer Written By Ben Forster 2023
+
+// Import 
+import { WebSocketServer } from 'ws';
+import { readFileSync } from 'fs';
+import { init } from 'raspi';
+import { Serial } from 'raspi-serial';
+
+init(() => {
+
+    // then open the serial port
+    var serial = new Serial();
+    serial.open(() => {
+        serial.on('data', (data) => {
+            console.log(data);
+        })
+    });
+    
+
+    const wss = new WebSocketServer({ port: 81, path:"/ws" });
+
+
+    // then load the locoOptions variable from the locoOptions json file
+    var locoOptions = JSON.parse(readFileSync("./locoOptions.json"));
+
+    // then go through the locoOptions and make a currentLocos list and put each object in them
+    var currentLocos = {}
+    for(var key in locoOptions) {
+        // then make a new object and put the speed, direction, function button values
+        var obj = {
+            "speed": 0,
+            "isForwards": true,
+            "emergencyStop": false,
+            "customButtons": {},
+            "dccAddress": locoOptions[key]["dccAddress"],
+            "serverAddress" : key
+        }
+
+        var numberOfCustomButtons = 0;
+
+        for(var customButtonNumber in locoOptions[key]["customButtons"]) {
+            numberOfCustomButtons += 1;
+            obj["customButtons"][customButtonNumber] = {
+                "momentary": locoOptions[key]["customButtons"][customButtonNumber]["momentary"],
+                "dccFunction": locoOptions[key]["customButtons"][customButtonNumber]["dccFunction"],
+                "isActive": false
+            };
+        }
+        obj["numberOfCustomButtons"] = numberOfCustomButtons;
+        // then put it in the currentLocos object
+        currentLocos[key] = obj;
+    }
+
+    // Then Define the Global Emergency Stop variables and the Global Track Short 
+    var globalEmergencyStop = false;
+    var globalTrackShort = false;
+
+    function locosObjectToBinaryCode(object) {
+        // make the binary array
+        var array = [];
+
+        // Step 1 - Fill in the Global Emergency Stop
+        array[0] = globalEmergencyStop ? 1 : 0;
+
+        // Step 2 - Fill in the Global Track Short
+        array[1] = globalTrackShort ? 1 : 0;
+
+        // Step 3 - Fill in the Loco Address BCD bits
+        array[2] = parseInt(object.serverAddress[0]);
+        array[3] = parseInt(object.serverAddress[1]);
+        array[4] = parseInt(object.serverAddress[2]);
+        array[5] = parseInt(object.serverAddress[3]);
+
+        // Step 4 - Fill in the Local Emergency Stop
+        array[6] = 0;
+
+        // Step 5 - Fill in the Speed
+        var newNumber1 = object.speed;
+        array[11] = parseInt(newNumber1 % 2);
+        newNumber1 = newNumber1 / 2;
+        array[10] = parseInt(newNumber1 % 2);
+        newNumber1 = newNumber1 / 2;
+        array[9] = parseInt(newNumber1 % 2);
+        newNumber1 = newNumber1 / 2;
+        array[8] = parseInt(newNumber1 % 2);
+        newNumber1 = newNumber1 / 2;
+        array[7] = parseInt(newNumber1 % 2);
+
+        // Step 6 - Fill in the Direction
+        array[12] = object.isForwards ? 1 : 0;
+
+        // Step 7 - then go through the custom buttons
+        for(var i = 1; i <= object.numberOfCustomButtons; i++) {
+            array[12 + i] = object["customButtons"][i].isActive ? 1 : 0;
+        }
+        // then work out how many more need to be sent to total 28 indexes
+        for(var x = 1; x <= 15 - object.numberOfCustomButtons; x++) {
+            array[12 + object.numberOfCustomButtons + i] = 0;
+        }
+
+        // Step 8 - Return the array
+        return array;
+    }
+
+    function binaryCodeToLocosObject(array) {
+        var object = {"customButtons": {}}
+
+        // Step 1 - Check the Global Emergency Stop
+        globalEmergencyStop = array[0];
+        // then check if it needs sending
+        sendEmergencyStopToTrack();
+
+        // Step 2 - Ignore The Global Track Short
+
+        // Step 3 - Read the Server Address
+        object.serverAddress = array[2].toString() + array[3].toString() + array[4].toString() + array[5].toString();
+        
+        // Step 4 - Read The Local Emergency Stop
+        object.emergencyStop = array[6];
+
+        // Step 5 - Read The Speed
+        object.speed = (parseInt(array[7]) * 16) + (parseInt(array[8]) * 8) + (parseInt(array[9]) * 4) + (parseInt(array[10]) * 2) + (parseInt(array[11]) * 1);
+        
+        // Step 6 - Read the Direction
+        object.isForwards = array[12];
+
+        // Step 7 - Read the Custom Buttons
+        // check how much is left of the array
+        for(var i = 13; i < array.length; i++) {
+            // then set the custom button
+            object["customButtons"][i-12] = {}
+            object["customButtons"][i-12]["isActive"] = Boolean(array[i]);
+            //console.log(object.customButtons)
+        }
+
+        // then return the object
+        return object;
+    }
+
+    function broadcastLocoObject(webSocket, serverAddress) {
+        // then get the loco object
+        var object = currentLocos[serverAddress];
+
+        // then convert it to binary
+        var binary = locosObjectToBinaryCode(object).join("");
+
+        // then broadcast it to all devices
+        webSocket.clients.forEach(function each(client) {
+            //console.log("Sending Binary:")
+            //console.log(binary);
+            client.send(binary, {binary: true});
+        })
+    }
+
+    function sendLocoToSerial(serverAddress) {
+        // Then Convert It To DCCEX Language
+
+        // whenever we recieve the sendLocoToSerial we must get the whole loco object and convert it to DCCEX commands then send it 
+        // to the command station 
+
+        // then we will get the locoObject from the serverAddress
+        var locoObject = currentLocos[serverAddress];
+
+
+        var commandArray = [];
+
+        // to do this we will send a <t cab speed dir> function first
+        commandArray[0] = "<t " + locoObject.dccAddress + " " + locoObject.speed + " " + locoObject.isForwards + ">\r\n"
+
+        // then we will update the functions
+        // run through all the functions in the customButtons object in the locoObject
+        var i = 1;
+        for(key in locoObject.customButtons) {
+            // then make the command
+            functionCommandArray[i] = "<F " + locoObject.dccAddress + " " + locoObject[customButtons][key]["dccFunction"] + " " + locoObject[customButtons][key]["isActive"] + ">\r\n";
+            i++;
+        }
+
+
+        // then go through all the commands in the commandArray
+        for(var j = 0; j < commandArray.length; j++) {
+            // then send each command to the serialPort
+            serial.write(commandArray[j]);
+        }
+        
+    }
+
+    function updateLoco(serverAddress) {
+        sendLocoToSerial(serverAddress);
+        // then send the broadcast of the updated loco object
+        broadcastLocoObject(wss, serverAddress);
+    }
+
+    wss.on("connection", function connection(ws) {
+        console.log("Connected To Client");
+        
+        // then as it has just connected send it all of the current loco entities to allow it to update itself for the first time
+        for(var key in currentLocos) {
+            // then broadcast it
+            broadcastLocoObject(wss, key);
+        }
+
+        // then wait for messages from the client
+        ws.on("message", function message(data) {
+            
+            // then convert the data to binary
+            var dataJson = data.toJSON();
+            //console.log("RECIEVED MESSAGE: " + dataJson.data);
+            var newObject = binaryCodeToLocosObject(dataJson.data);
+
+            // then update the currentLocos array
+            currentLocos[newObject.serverAddress]["speed"] = newObject.speed;
+            currentLocos[newObject.serverAddress]["emergencyStop"] = newObject.emergencyStop;
+            currentLocos[newObject.serverAddress]["isForwards"] = newObject.isForwards;
+            // then go through the customButtons object
+            for(var key in currentLocos[newObject.serverAddress]["customButtons"]) {
+                // then update the isActive state
+                currentLocos[newObject.serverAddress]["customButtons"][key]["isActive"] = newObject["customButtons"][key]["isActive"];
+                // then check if it is a momentary and on
+                if(currentLocos[newObject.serverAddress]["customButtons"][key]["isActive"] == true && currentLocos[newObject.serverAddress]["customButtons"][key]["momentary"] == true) {
+                    // then set a timeout to switch the button off as it is momentary
+                    setTimeout(function() {
+                        currentLocos[newObject.serverAddress]["customButtons"][key]["isActive"] = false;
+                        updateLoco(newObject.serverAddress);
+                    }, 500);
+                }
+            }
+
+            // then call the updateLoco function 
+            updateLoco(newObject.serverAddress);
+        })
+
+    })
+
+
+
+})
