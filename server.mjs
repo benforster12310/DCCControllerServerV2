@@ -4,6 +4,7 @@
 import { WebSocketServer } from 'ws';
 import { read, readFileSync } from 'fs';
 
+var LocosObject = {}
 
 // 1 - Load The Webserver
 const wss = new WebSocketServer({ port: 81, path:"/ws" });
