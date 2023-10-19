@@ -53,7 +53,10 @@ function broadcastAllLocos(wss) {
 
 // checkEmergencyStop
 function checkEmergencyStop() {
-
+    // then check if the global emergency stop has been activated
+    if(globalEmergencyStop == true) {
+        // then send a command to turn the track power off
+    }
 }
 
 // updateLoco
