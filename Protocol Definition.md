@@ -1,7 +1,5 @@
 # Protocol Definition
 
-
-
 ## Data Packets Will Contain
 
 - Global Emergency Stop

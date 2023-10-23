@@ -29,14 +29,14 @@ for(var key in locosJson) {
     // then put the cB key and property into the same thing
     LocosObject[locosJson[key]["sA"]]["cB"] = locosJson[key]["cB"];
 
+    // then but the dA key and property into thr same thing
+    LocosObject[locosJson[key]["sA"]]["dA"] = key;
+
     console.log(LocosObject)
     
 }
 
-
-
 // broadcastAllLocos
-
 function broadcastAllLocos(wss) {
     // go through all loco objects
     for(key in LocosObject) {
@@ -50,21 +50,62 @@ function broadcastAllLocos(wss) {
     }
 }
 
-
 // checkEmergencyStop
 function checkEmergencyStop() {
     // then check if the global emergency stop has been activated
     if(globalEmergencyStop == true) {
         // then send a command to turn the track power off
+        sendToSerial("<!>");
     }
 }
 
-// updateLoco
-
-function updateLoco(serverAddress) {
-    console.log("Call To Update Loco: " + serverAddress);
+// sendToSerial
+function sendToSerial(string) {
+    console.log("SERIAL OUTPUT>>> " + string);
 }
 
+// updateLoco
+function updateLoco(serverAddress) {
+    console.log("Call To Update Loco: " + serverAddress);
+
+    // work out the speed from the 5 bits
+    var string = LocosObject[serverAddress]["string"];
+    var speed = (string[7] * 16) + (string[8] * 8) + (string[9] * 4) + (string[10] * 2) + (string[11] * 1);
+    // then change the speed from 0-28 to 0-127
+    var speed = parseInt((speed * 127) / 28);
+
+    // then check if it was requested to be emergency stopped
+    if(string[6] == 1) {
+        // then set speed to -1
+        speed = -1;
+    }
+    
+    // then check the direction
+    var direction = 1 * string[12];
+
+    // then send that command to the serial connection
+    var mainCommand = "<t 1 " + LocosObject[serverAddress]["dA"] + " " + speed + " " + direction + ">";
+
+    sendToSerial(mainCommand);
+
+    // then do the functions commands
+
+    // go through each custom button and then get its real function value, then check if it is on or off then send it to the serial
+    for(var key in LocosObject[serverAddress]["cB"]) {
+        // then check what function it is mapped to
+        var functionNo = LocosObject[serverAddress]["cB"][key]["f"];
+
+        // then check what it is set to
+        var customButtonValue = string[12 + parseInt(key)];
+
+        // then combine them into the function and send them off to the serial
+        var functionCommand = "<F " + LocosObject[serverAddress]["dA"] + " " + functionNo + " " + customButtonValue + ">";
+
+        sendToSerial(functionCommand)
+
+    }
+
+}
 
 // - Wait For Connections To The Websocket
 wss.on("connection", function connection(ws) {
@@ -78,7 +119,22 @@ wss.on("connection", function connection(ws) {
         // then read the buffer
         var dataJson = data.toJSON();
 
-        var binary = dataJson.data;
+        var binary = [];
+
+        // then go through and swap 48 for 0 and 49 for 1
+
+        for(var i = 0; i < dataJson.data.length; i++) {
+            // then check if it is 48 and swap it for 0
+            if(dataJson.data[i] == 48) {
+                // then insert 0 into the i'th index
+                binary[i] = 0;
+            }
+            // then check if it is 49 and swap it for 1
+            else if(dataJson.data[i] == 49) {
+                // then insert 1 into the i'th index
+                binary[i] = 1;
+            }
+        }
 
         console.log(dataJson)
 
@@ -109,11 +165,15 @@ wss.on("connection", function connection(ws) {
 
         // then go through the custom buttons and check if any of them are momentary
 
+        var isMomentary = false;
+
         for(var i = 13; i < binary.length; i++) {
             // then check if the button is on
             if(binary[i] == 1) {
                 // then it is on so check if it is momentary
                 if(LocosObject[addressString]["cB"][i-12]["m"] == true) {
+                    // then set isMomentary to true
+                    isMomentary = true;
                     // then set a timer to turn it off
                     setTimeout(function() {
                         // retrieve the current stored variable
@@ -129,7 +189,13 @@ wss.on("connection", function connection(ws) {
             }
         }
 
-        console.log(str);
+        // then check if the isMomentary flag was set
+        if(isMomentary == true) {
+            // then set a timeout of 500ms to update the locos again if any buttons were momentary
+            setTimeout(function() {
+                updateLoco(addressString)
+            }, 500);
+        }
         
     })
 })
