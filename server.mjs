@@ -1,8 +1,9 @@
 // DCCControllerServerV2 Written By Ben Forster 2023
 
 // Import Modules
-import { WebSocketServer } from 'ws';
-import { readFileSync } from 'fs';
+const WebSocketServer = require('ws');
+const readFileSync = require('fs');
+const SerialPort = require('serialport');
 
 // define main variables
 var LocosObject = {};
@@ -36,6 +37,15 @@ for(var key in locosJson) {
     
 }
 
+// 4 - Start The Serial Port Connection
+const serialConnection = new SerialPort({path: "COM7", baudRate: 115200})
+
+// 5 - Power The Track On 
+setTimeout(function() {
+    serialConnection.write("<1 MAIN> \r\n");
+}, 1000);
+
+
 // broadcastAllLocos
 function broadcastAllLocos(wss) {
     // go through all loco objects
@@ -62,6 +72,7 @@ function checkEmergencyStop() {
 // sendToSerial
 function sendToSerial(string) {
     console.log("SERIAL OUTPUT>>> " + string);
+    serialConnection.write(string);
 }
 
 // updateLoco
@@ -102,9 +113,18 @@ function updateLoco(serverAddress) {
         var functionCommand = "<F " + LocosObject[serverAddress]["dA"] + " " + functionNo + " " + customButtonValue + ">";
 
         sendToSerial(functionCommand)
-
     }
+    
+    // then reset the emergency stop as it will have been acted on
+    string[6] = "0";
 
+    // then put the whole string back into the json
+    LocosObject[serverAddress]["string"] = string;
+
+    // 2 - Broadcast to all devices
+    wss.clients.forEach(function each(client) {
+        client.send(string, {binary: true});
+    })
 }
 
 // - Wait For Connections To The Websocket
@@ -133,6 +153,10 @@ wss.on("connection", function connection(ws) {
             else if(dataJson.data[i] == 49) {
                 // then insert 1 into the i'th index
                 binary[i] = 1;
+            }
+            // if it was normal
+            else {
+                binary[i] = dataJson.data[i];
             }
         }
 
