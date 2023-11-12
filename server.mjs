@@ -10,7 +10,7 @@ var LocosObject = {};
 var globalEmergencyStop = false;
 var globalTrackShort = false;
 
-// 1 - Load The Webserver
+// 1 - Load The WebSocketServer
 const wss = new WebSocketServer({ port: 81, path:"/ws" });
 
 // 2 - Load and Parse locos.json file
@@ -30,7 +30,7 @@ for(var key in locosJson) {
     // then put the cB key and property into the same thing
     LocosObject[locosJson[key]["sA"]]["cB"] = locosJson[key]["cB"];
 
-    // then but the dA key and property into thr same thing
+    // then but the dA key and property into the same thing
     LocosObject[locosJson[key]["sA"]]["dA"] = key;
 
     console.log(LocosObject)
@@ -65,7 +65,7 @@ function checkEmergencyStop() {
     // then check if the global emergency stop has been activated
     if(globalEmergencyStop == true) {
         // then send a command to turn the track power off
-        sendToSerial("<!>");
+        sendToSerial("<0 MAIN>");
     }
 }
 
